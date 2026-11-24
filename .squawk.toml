@@ -1,0 +1,14 @@
+# Squawk lints SQL migrations for operations that are unsafe on a live
+# database (locks, rewrites). Run: npx squawk-cli apps/api/migrations/*.up.sql
+#
+# Excluded rules and why:
+# - prefer-bigint-over-int / prefer-bigint-over-smallint: these target
+#   auto-increment ids that may overflow. Our ids are UUIDv7; the int columns
+#   (HTTP status, ISO weekday) can never overflow.
+# - prefer-robust-stmts: migrations run once inside golang-migrate's
+#   versioning; IF NOT EXISTS would hide real drift.
+excluded_rules = [
+  "prefer-bigint-over-int",
+  "prefer-bigint-over-smallint",
+  "prefer-robust-stmts",
+]
