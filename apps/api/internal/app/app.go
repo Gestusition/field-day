@@ -155,8 +155,8 @@ func (a *App) router(srv *server, authn *auth.Authenticator, auditSvc *audit.Ser
 		return nil, err
 	}
 
-	if a.cfg.IsProduction() {
-		gin.SetMode(gin.ReleaseMode)
+	if a.cfg.Env != "development" {
+		gin.SetMode(gin.ReleaseMode) // no route dump or debug warnings
 	}
 	r := gin.New()
 	r.ContextWithFallback = true // handlers read the principal from the request context

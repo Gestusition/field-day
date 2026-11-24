@@ -59,7 +59,7 @@ services:
       OIDC_AUDIENCES: field-day-web,field-day-mobile
       CORS_ALLOWED_ORIGINS: http://localhost:5173
       # Development-only key. Generate your own for any shared environment.
-      CREDENTIAL_ENCRYPTION_KEY: ZGV2LW9ubHktZG8tbm90LXVzZS1pbi1wcm9kdWN0aW9uIQ==
+      CREDENTIAL_ENCRYPTION_KEY: ZmllbGQtZGF5LWxvY2FsLWRldmVsb3BtZW50LWtleSE=
     ports:
       - "8080:8080"
       - "1883:1883"
