@@ -1,12 +1,10 @@
 name: API
 
+# Runs on every pull request (no path filter) because these jobs are required
+# status checks on main: a filtered-out required check would never report and
+# would block the merge.
 on:
   pull_request:
-    paths:
-      - "apps/api/**"
-      - "api/**"
-      - ".squawk.toml"
-      - ".github/workflows/api.yml"
   push:
     branches: [main]
     paths:

@@ -2,12 +2,9 @@ name: API contract
 
 # The OpenAPI file is shared by backend, web, mobile and firmware teams, so it
 # is linted on every change, independently of any app.
+# Runs on every pull request because "Lint OpenAPI" is a required check on main.
 on:
   pull_request:
-    paths:
-      - "api/**"
-      - "redocly.yaml"
-      - ".github/workflows/contract.yml"
   push:
     branches: [main]
     paths:
