@@ -25,12 +25,19 @@ type Config struct {
 	DatabaseMaxConns int32  `env:"DATABASE_MAX_CONNS" envDefault:"10"`
 	MigrateOnStart   bool   `env:"MIGRATE_ON_START" envDefault:"false"`
 
-	OIDCIssuer string `env:"OIDC_ISSUER,required"`
+	// AuthMode selects how people sign in:
+	//   "oidc" — Casdoor access tokens (the only mode allowed in production).
+	//   "dev"  — local development without Casdoor: the single token
+	//            "Bearer dev" is an admin. Refused when APP_ENV=production.
+	AuthMode string `env:"AUTH_MODE" envDefault:"oidc"`
+
+	// Casdoor / OIDC settings; required when AUTH_MODE=oidc.
+	OIDCIssuer string `env:"OIDC_ISSUER"`
 	// OIDCJWKSURL skips discovery and fetches signing keys from this URL.
 	// Needed when the API reaches the IdP under a different host than the
 	// issuer clients see (e.g. inside Docker Compose).
 	OIDCJWKSURL    string   `env:"OIDC_JWKS_URL"`
-	OIDCAudiences  []string `env:"OIDC_AUDIENCES,required" envSeparator:","`
+	OIDCAudiences  []string `env:"OIDC_AUDIENCES" envSeparator:","`
 	OIDCRolesClaim string   `env:"OIDC_ROLES_CLAIM" envDefault:"roles"`
 	OIDCAdminRole  string   `env:"OIDC_ADMIN_ROLE" envDefault:"admin"`
 
@@ -57,6 +64,12 @@ type Config struct {
 	location      *time.Location
 }
 
+// Authentication modes.
+const (
+	AuthModeOIDC = "oidc"
+	AuthModeDev  = "dev"
+)
+
 // Load reads and validates the configuration from the environment.
 func Load() (*Config, error) {
 	var c Config
@@ -73,6 +86,19 @@ func Load() (*Config, error) {
 // tests that build a Config by hand must call it too.
 func (c *Config) Finalize() error {
 	var errs []error
+
+	switch c.AuthMode {
+	case AuthModeOIDC:
+		if c.OIDCIssuer == "" || len(c.OIDCAudiences) == 0 {
+			errs = append(errs, errors.New("AUTH_MODE=oidc requires OIDC_ISSUER and OIDC_AUDIENCES"))
+		}
+	case AuthModeDev:
+		if c.IsProduction() {
+			errs = append(errs, errors.New("AUTH_MODE=dev is not allowed when APP_ENV=production"))
+		}
+	default:
+		errs = append(errs, errors.New("AUTH_MODE must be oidc or dev"))
+	}
 
 	key, err := base64.StdEncoding.DecodeString(c.CredentialEncryptionKey)
 	if err != nil || len(key) != 32 {

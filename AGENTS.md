@@ -24,7 +24,9 @@ api/openapi.yaml     THE contract. Single source of truth for every client.
 apps/api/            Go backend (domain-based modular monolith)
 docs/                Architecture, device protocol, Casdoor setup
 deploy/              Container/infra support files
-compose.yaml         Local stack: PostgreSQL + Casdoor + API
+package.json         `bun run dev` / `bun run prod` / `stop` / `logs` / `reset`
+compose.yaml         Dev stack: PostgreSQL + API (Casdoor only under the "casdoor" profile)
+compose.prod.yaml    Production overrides: Casdoor required (AUTH_MODE=oidc)
 .github/             CI, Dependabot, templates, CODEOWNERS
 ```
 
@@ -54,10 +56,19 @@ compose.yaml         Local stack: PostgreSQL + Casdoor + API
 
 ## Commands
 
-All backend commands run from `apps/api` (see its `AGENTS.md`):
+Run everything (repo root, needs only Docker + Bun):
 
 ```sh
-docker compose up -d postgres casdoor   # dependencies (repo root)
+bun run dev      # PostgreSQL + API on :8080, no Casdoor; auth header "Bearer dev" (admin)
+bun run prod     # production mode: Casdoor required, "dev" token rejected
+```
+
+`AUTH_MODE=dev` is refused when `APP_ENV=production`. Keep all Casdoor/OIDC
+code; it is what production uses.
+
+Backend commands run from `apps/api` (see its `AGENTS.md`):
+
+```sh
 make gen                                # regenerate from contract + SQL
 make test                               # unit + integration (needs Docker)
 make lint

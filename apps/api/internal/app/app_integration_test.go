@@ -100,7 +100,14 @@ func (c *client) must(status int, method, path, token string, body any) resp {
 	return r
 }
 
+// setup starts the API with the static test tokens (OIDC mode).
 func setup(t *testing.T) *client {
+	t.Helper()
+	return setupWith(t, nil, app.Options{Tokens: tokens})
+}
+
+// setupWith starts PostgreSQL and the API; mutate may adjust the config.
+func setupWith(t *testing.T, mutate func(*config.Config), opts app.Options) *client {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("integration test")
@@ -121,22 +128,45 @@ func setup(t *testing.T) *client {
 
 	cfg := &config.Config{
 		Env: "test", DatabaseURL: dsn, DatabaseMaxConns: 5, MigrateOnStart: true,
+		AuthMode:   config.AuthModeOIDC,
 		OIDCIssuer: "http://unused", OIDCAudiences: []string{"test"}, OIDCAdminRole: "admin",
 		CredentialEncryptionKey: base64.StdEncoding.EncodeToString(secret.Random(32)),
 		HCEAID:                  "F04649454C4444", SiteTimezone: "Europe/Istanbul",
 		UnlockDuration: 3 * time.Second, WalletCurrency: "TRY", LogFormat: "text",
 		ShutdownTimeout: time.Second,
 	}
+	if mutate != nil {
+		mutate(cfg)
+	}
 	require.NoError(t, cfg.Finalize())
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	a, err := app.New(ctx, cfg, log, app.Options{Tokens: tokens})
+	a, err := app.New(ctx, cfg, log, opts)
 	require.NoError(t, err)
 	t.Cleanup(a.Close)
 
 	srv := httptest.NewServer(a.Handler())
 	t.Cleanup(srv.Close)
 	return &client{t: t, srv: srv}
+}
+
+// TestDevAuthMode covers `bun run dev`: no identity provider, "Bearer dev".
+func TestDevAuthMode(t *testing.T) {
+	c := setupWith(t, func(cfg *config.Config) {
+		cfg.Env = "development"
+		cfg.AuthMode = config.AuthModeDev
+		cfg.OIDCIssuer, cfg.OIDCAudiences = "", nil
+	}, app.Options{})
+
+	me := c.must(200, "GET", "/api/me", "dev", nil)
+	assert.Equal(t, true, me.Body["is_admin"])
+	assert.Equal(t, "Developer", me.str("display_name"))
+	c.must(201, "POST", "/api/admin/zones", "dev", map[string]any{"name": "Lab"})
+	c.must(401, "GET", "/api/me", "not-dev", nil)
+	c.must(401, "GET", "/api/me", "", nil)
+
+	// The root address lands on the interactive docs.
+	c.must(200, "GET", "/", "", nil)
 }
 
 // isoToday returns today's ISO weekday in the site time zone.

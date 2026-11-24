@@ -1,9 +1,13 @@
-# Casdoor setup (local development)
+# Casdoor setup (production)
 
-Casdoor is the identity provider for people (web and mobile). Readers do not
-use Casdoor; they use per-reader API keys.
+Casdoor is the identity provider for people (web and mobile) in production.
+Readers do not use Casdoor; they use per-reader API keys.
 
-1. `docker compose up -d postgres casdoor`
+**Development does not need any of this:** `bun run dev` runs the API with
+`AUTH_MODE=dev`, where `Authorization: Bearer dev` signs in as an admin.
+
+1. `cp .env.example .env`, fill in `CREDENTIAL_ENCRYPTION_KEY`, then `bun run prod`
+   (starts PostgreSQL + Casdoor + the API with `AUTH_MODE=oidc`).
 2. Open <http://localhost:8000> and sign in with Casdoor's default admin
    account (see the Casdoor docs), then **change that password immediately**.
 3. Create an **organization**, e.g. `field-day`.

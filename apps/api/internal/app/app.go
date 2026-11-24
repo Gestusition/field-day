@@ -121,7 +121,12 @@ func (a *App) build(opts Options) error {
 	}
 
 	tokens := opts.Tokens
-	if tokens == nil {
+	switch {
+	case tokens != nil:
+	case cfg.AuthMode == config.AuthModeDev:
+		log.Warn("AUTH_MODE=dev: Casdoor is bypassed; use the header 'Authorization: Bearer dev'. Never use in production.")
+		tokens = auth.DevVerifier{AdminRole: cfg.OIDCAdminRole}
+	default:
 		tokens = auth.NewOIDCVerifier(cfg.OIDCIssuer, cfg.OIDCJWKSURL, cfg.OIDCAudiences, cfg.OIDCRolesClaim)
 	}
 	authn := &auth.Authenticator{
@@ -187,6 +192,7 @@ func (a *App) router(srv *server, authn *auth.Authenticator, auditSvc *audit.Ser
 	})
 	r.GET(BasePath+"/openapi.json", httpx.SpecHandler(specJSON))
 	r.GET("/docs", httpx.DocsHandler)
+	r.GET("/", func(c *gin.Context) { c.Redirect(http.StatusFound, "/docs") })
 
 	// The contract. Order matters: audit wraps everything so it sees the
 	// final status; the contract middleware authenticates and validates.

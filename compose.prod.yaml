@@ -1,0 +1,31 @@
+# Production overrides, applied by `bun run prod`:
+#   docker compose -f compose.yaml -f compose.prod.yaml --profile casdoor up --build
+#
+# Casdoor is required: the API runs with AUTH_MODE=oidc and APP_ENV=production,
+# so the development token is refused and the API will not start without the
+# settings below. Put real values in a `.env` file next to this file
+# (see .env.example); never commit it.
+
+services:
+  api:
+    environment:
+      APP_ENV: production
+      LOG_FORMAT: json
+      LOG_LEVEL: info
+      AUTH_MODE: oidc
+      # Browsers and phones see Casdoor at this address, so it is the issuer
+      # in tokens; the API container fetches signing keys by service name.
+      OIDC_ISSUER: ${OIDC_ISSUER:-http://localhost:8000}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-http://casdoor:8000/.well-known/jwks}
+      OIDC_AUDIENCES: ${OIDC_AUDIENCES:-field-day-web,field-day-mobile}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?set CREDENTIAL_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+    restart: unless-stopped
+
+  casdoor:
+    environment:
+      origin: ${OIDC_ISSUER:-http://localhost:8000}
+    restart: unless-stopped
+
+  postgres:
+    restart: unless-stopped

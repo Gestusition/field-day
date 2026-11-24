@@ -16,6 +16,11 @@ info:
     Readers additionally receive server-initiated commands over MQTT; see
     `docs/device-protocol.md`.
 
+    **Local development (`bun run dev`)** needs no Casdoor: send
+    `Authorization: Bearer dev` for every `userAuth` / `adminAuth` endpoint
+    (it is an admin account). `bun run prod` and real deployments require
+    Casdoor tokens and reject `dev`.
+
     **Conventions**
     - All ids are UUIDv7 strings (time ordered).
     - Lists are cursor paginated: pass the `next_cursor` of the previous page

@@ -22,36 +22,42 @@ readers through a single API contract: [`api/openapi.yaml`](api/openapi.yaml).
 
 Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md). Agent/automation guide: [AGENTS.md](AGENTS.md).
 
-## Quick start (backend)
+## Quick start
 
-Requirements: Go (version in `apps/api/go.mod`), Docker, [sqlc](https://sqlc.dev) 1.31 (only to regenerate code).
-
-```sh
-# whole stack: PostgreSQL + Casdoor + API
-docker compose up -d --build
-```
-
-- API: <http://localhost:8080> — interactive docs at <http://localhost:8080/docs>
-- Health: `/healthz` (process up), `/readyz` (database reachable)
-- MQTT for readers: `localhost:1883`
-- Casdoor: <http://localhost:8000> — configure it with [docs/casdoor-setup.md](docs/casdoor-setup.md)
-
-Developing the API with live reload:
+The only requirements are [Docker Desktop](https://www.docker.com/products/docker-desktop/) and [Bun](https://bun.sh).
 
 ```sh
-docker compose up -d postgres casdoor
-cd apps/api
-cp .env.example .env        # set CREDENTIAL_ENCRYPTION_KEY: openssl rand -base64 32
-make dev                    # or: make run
-make test                   # unit + integration tests (Docker required)
+bun run dev
 ```
+
+That's it: PostgreSQL and the API start, migrations run, and
+<http://localhost:8080> opens the interactive API docs. No Casdoor is needed
+in development — sign in by sending:
+
+```
+Authorization: Bearer dev
+```
+
+(`dev` is an admin account, so every endpoint works.) Readers connect to MQTT
+on `localhost:1883`. Stop with `Ctrl+C`.
+
+| Command | What it does |
+|---|---|
+| `bun run dev` | Development: PostgreSQL + API, no Casdoor, `Bearer dev` login |
+| `bun run prod` | Production mode: PostgreSQL + **Casdoor** + API, real logins only. Needs a `.env` (copy `.env.example`) and Casdoor configured ([docs/casdoor-setup.md](docs/casdoor-setup.md)) |
+| `bun run stop` | Stop everything |
+| `bun run logs` | Follow API logs |
+| `bun run reset` | Stop and **delete** all local data |
+
+Backend contributors working on Go code: see [apps/api/AGENTS.md](apps/api/AGENTS.md)
+(`make test`, `make gen`, `make lint`; Go and sqlc needed there).
 
 ## API at a glance
 
 | Prefix | Client | Auth |
 |---|---|---|
-| `/api/me/*` | mobile app, web (end user) | Casdoor access token |
-| `/api/admin/*` | web admin panel | Casdoor access token with role `admin` |
+| `/api/me/*` | mobile app, web (end user) | Casdoor access token (`Bearer dev` in development) |
+| `/api/admin/*` | web admin panel | Casdoor access token with role `admin` (`Bearer dev` in development) |
 | `/api/device/*` | NFC readers | per-reader API key |
 
 Main capabilities: users (just-in-time from Casdoor, admin pre-registration),
