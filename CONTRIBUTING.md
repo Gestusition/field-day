@@ -7,9 +7,10 @@
 3. Commit with [Conventional Commits](https://www.conventionalcommits.org/):
    `feat(api): add access groups`, `fix(mobile): refresh token on resume`.
 4. Open a PR, fill in the template, get a review from the code owners.
-5. Once CI is green, merge with **"Create a merge commit"** (no squash, no
-   rebase) so every commit stays in the history. Because each commit lands
-   on `main` as is, every commit message must follow Conventional Commits.
+5. Once CI is green, merge with **"Create a merge commit"** (default) or
+   **"Rebase and merge"**. Squash is disabled so every commit stays in the
+   history. Because each commit lands on `main` as is, every commit message
+   must follow Conventional Commits.
 
 Install the git hooks once: `lefthook install`.
 
