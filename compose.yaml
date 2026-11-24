@@ -1,0 +1,68 @@
+# Local development stack: PostgreSQL + Casdoor + API.
+#
+#   docker compose up -d                  # everything
+#   docker compose up -d postgres casdoor # only dependencies, then `make dev` in apps/api
+#
+# Ports: API 8080, MQTT 1883, Casdoor 8000, PostgreSQL 5432.
+# These credentials are for local development only.
+
+name: field-day
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: fieldday
+      POSTGRES_PASSWORD: fieldday
+      POSTGRES_DB: fieldday
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldday -d fieldday"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  casdoor:
+    image: casbin/casdoor:v4.29.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUNNING_IN_DOCKER: "true"
+      driverName: postgres
+      dataSourceName: "user=casdoor password=casdoor host=postgres port=5432 sslmode=disable dbname=casdoor"
+      dbName: casdoor
+      origin: http://localhost:8000
+    ports:
+      - "8000:8000"
+
+  api:
+    build:
+      context: ./apps/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://fieldday:fieldday@postgres:5432/fieldday?sslmode=disable
+      MIGRATE_ON_START: "true"
+      # Browsers and phones see Casdoor at localhost:8000, so that is the
+      # issuer inside tokens; the container fetches signing keys by service name.
+      OIDC_ISSUER: http://localhost:8000
+      OIDC_JWKS_URL: http://casdoor:8000/.well-known/jwks
+      OIDC_AUDIENCES: field-day-web,field-day-mobile
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
+      # Development-only key. Generate your own for any shared environment.
+      CREDENTIAL_ENCRYPTION_KEY: ZGV2LW9ubHktZG8tbm90LXVzZS1pbi1wcm9kdWN0aW9uIQ==
+    ports:
+      - "8080:8080"
+      - "1883:1883"
+
+volumes:
+  pgdata:
