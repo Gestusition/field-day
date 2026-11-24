@@ -28,7 +28,7 @@ services:
 
   # Identity provider for production. Not started by `bun run dev`.
   casdoor:
-    image: casbin/casdoor:v4.29.0
+    image: casbin/casdoor:v4.30.0
     profiles: [casdoor]
     depends_on:
       postgres:
