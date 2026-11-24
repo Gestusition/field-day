@@ -51,6 +51,8 @@ compose.prod.yaml    Production overrides: Casdoor required (AUTH_MODE=oidc)
   `feat(api): add wallet refunds`, `fix(firmware): debounce taps`.
   Scopes: `api`, `contract`, `db`, `web`, `mobile`, `firmware`, `ci`, `docs`.
 - Never commit directly to `main`; open a PR. CI must be green.
+- Merge PRs with a merge commit (`gh pr merge <n> --merge`, the default) or
+  rebase (`--rebase`). Never squash: every commit stays visible in the history.
 - Do not add tool, assistant or bot attribution to branch names, commit
   messages, trailers or PR descriptions.
 
