@@ -1,0 +1,67 @@
+# Base stack. Use the scripts in package.json from the repo root:
+#
+#   bun run dev    PostgreSQL + API. No Casdoor; sign in with "Bearer dev".
+#   bun run prod   PostgreSQL + Casdoor + API in production mode (compose.prod.yaml).
+#
+# Ports: API 8080, MQTT 1883, PostgreSQL 5432, Casdoor 8000 (prod only).
+# The credentials here are for local development only.
+
+name: field-day
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: fieldday
+      POSTGRES_PASSWORD: fieldday
+      POSTGRES_DB: fieldday
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldday -d fieldday"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Identity provider for production. Not started by `bun run dev`.
+  casdoor:
+    image: casbin/casdoor:v4.29.0
+    profiles: [casdoor]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      RUNNING_IN_DOCKER: "true"
+      driverName: postgres
+      dataSourceName: "user=casdoor password=casdoor host=postgres port=5432 sslmode=disable dbname=casdoor"
+      dbName: casdoor
+      origin: http://localhost:8000
+    ports:
+      - "8000:8000"
+
+  api:
+    build:
+      context: ./apps/api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      LOG_FORMAT: text
+      LOG_LEVEL: debug
+      DATABASE_URL: postgres://fieldday:fieldday@postgres:5432/fieldday?sslmode=disable
+      MIGRATE_ON_START: "true"
+      # Development sign-in without Casdoor: "Authorization: Bearer dev".
+      AUTH_MODE: dev
+      CORS_ALLOWED_ORIGINS: http://localhost:5173
+      # Development-only key. Production sets its own (compose.prod.yaml).
+      CREDENTIAL_ENCRYPTION_KEY: ZmllbGQtZGF5LWxvY2FsLWRldmVsb3BtZW50LWtleSE=
+    ports:
+      - "8080:8080"
+      - "1883:1883"
+
+volumes:
+  pgdata:

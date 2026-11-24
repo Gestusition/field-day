@@ -1,0 +1,12 @@
+# Generates the HTTP layer from the shared contract in /api/openapi.yaml.
+# Run with `make gen` (or `go generate ./...`). Never edit the output by hand.
+package: apigen
+# Relative to internal/apigen, where `go generate` runs this.
+output: apigen.gen.go
+generate:
+  models: true
+  gin-server: true
+  strict-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: true

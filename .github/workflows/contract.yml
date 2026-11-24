@@ -1,0 +1,23 @@
+name: API contract
+
+# The OpenAPI file is shared by backend, web, mobile and firmware teams, so it
+# is linted on every change, independently of any app.
+# Runs on every pull request because "Lint OpenAPI" is a required check on main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - "redocly.yaml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: npx --yes @redocly/cli@2.83.0 lint api/openapi.yaml

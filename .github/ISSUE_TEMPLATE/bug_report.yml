@@ -1,0 +1,41 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Backend, API contract, Web, Mobile, Firmware / reader, Infra]
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Include the request_id from the error response if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit / firmware version
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Remove tokens, API keys and personal data before pasting.
+      render: shell

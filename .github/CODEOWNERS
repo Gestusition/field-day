@@ -1,0 +1,23 @@
+# Code owners are requested for review automatically. Later rules win.
+# Replace the handles with each team's GitHub usernames (or a GitHub team).
+
+*                           @Gestusition
+
+# Shared API contract: every client depends on it, so backend reviews it.
+/api/                       @Gestusition
+
+# Backend + database
+/apps/api/                  @Gestusition
+/compose.yaml               @Gestusition
+/deploy/                    @Gestusition
+
+# Web (added later)
+# /apps/web/                @web-team-handle
+
+# Mobile app
+# /apps/mobile/             @mobile-team-handle
+
+# Embedded firmware (STM32 + ESP32-C3)
+# /firmware/                @embedded-team-handle
+
+/.github/                   @Gestusition

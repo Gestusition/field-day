@@ -1,0 +1,56 @@
+# Weekly dependency updates, grouped so each ecosystem opens at most one PR
+# for minor/patch bumps. Major versions come as separate PRs for review.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, backend]
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directory: /apps/api
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, backend]
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    commit-message:
+      prefix: "chore(deps)"
+    labels: [dependencies, infra]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Istanbul
+    commit-message:
+      prefix: "chore(ci)"
+    labels: [dependencies, ci]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Web (apps/web) and mobile (apps/mobile) entries are added together with
+  # those apps, e.g.:
+  # - package-ecosystem: bun
+  #   directory: /apps/web

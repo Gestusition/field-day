@@ -1,98 +1,134 @@
 # field-day
 
-NFC-based authentication platform by **AREL Embedded Systems Club**.
-First use case: AC EV charging management.
+NFC-based identification platform by **AREL Embedded Systems Club**.
 
-> **Note:** This tech stack is **not final**. It is a proposal and open to discussion.
+Use cases: physical **access control**, closed-loop **payments** (cafeteria,
+vending), **person/object identification** and **device configuration** with
+NFC cards, tags and phones (Host Card Emulation).
 
-## Tech Stack
+One **shared backend** serves the web panel, the mobile app and the NFC
+readers through a single API contract: [`api/openapi.yaml`](api/openapi.yaml).
 
-### Backend (Shared API for Web + Mobile)
+## Repository
+
+| Path | What | Team |
+|---|---|---|
+| [`api/openapi.yaml`](api/openapi.yaml) | Shared API contract | all |
+| [`apps/api`](apps/api) | Backend (Go) + database | backend |
+| `apps/web` | Web admin/user panel *(planned)* | web |
+| `apps/mobile` | Mobile app *(mobile team)* | mobile |
+| `firmware/` | Reader firmware *(embedded team)* | embedded |
+| [`docs/`](docs) | [Architecture](docs/architecture.md), [reader protocol](docs/device-protocol.md), [Casdoor setup](docs/casdoor-setup.md) | all |
+
+Contributor guide: [CONTRIBUTING.md](CONTRIBUTING.md). Agent/automation guide: [AGENTS.md](AGENTS.md).
+
+## Quick start
+
+The only requirements are [Docker Desktop](https://www.docker.com/products/docker-desktop/) and [Bun](https://bun.sh).
+
+```sh
+bun run dev
+```
+
+That's it: PostgreSQL and the API start, migrations run, and
+<http://localhost:8080> opens the interactive API docs. No Casdoor is needed
+in development — sign in by sending:
+
+```
+Authorization: Bearer dev
+```
+
+(`dev` is an admin account, so every endpoint works.) Readers connect to MQTT
+on `localhost:1883`. Stop with `Ctrl+C`.
+
+| Command | What it does |
+|---|---|
+| `bun run dev` | Development: PostgreSQL + API, no Casdoor, `Bearer dev` login |
+| `bun run prod` | Production mode: PostgreSQL + **Casdoor** + API, real logins only. Needs a `.env` (copy `.env.example`) and Casdoor configured ([docs/casdoor-setup.md](docs/casdoor-setup.md)) |
+| `bun run stop` | Stop everything |
+| `bun run logs` | Follow API logs |
+| `bun run reset` | Stop and **delete** all local data |
+
+Backend contributors working on Go code: see [apps/api/AGENTS.md](apps/api/AGENTS.md)
+(`make test`, `make gen`, `make lint`; Go and sqlc needed there).
+
+## API at a glance
+
+| Prefix | Client | Auth |
+|---|---|---|
+| `/api/me/*` | mobile app, web (end user) | Casdoor access token (`Bearer dev` in development) |
+| `/api/admin/*` | web admin panel | Casdoor access token with role `admin` (`Bearer dev` in development) |
+| `/api/device/*` | NFC readers | per-reader API key |
+
+Main capabilities: users (just-in-time from Casdoor, admin pre-registration),
+credentials (cards + phone HCE, tap-to-enroll, report lost), readers (API
+keys, heartbeat, command queue over MQTT/HTTP), access control (zones,
+groups, weekday/time grants, secure-credential zones, event log), wallet
+(top-up, card payments, refunds, idempotent ledger) and an admin audit log.
+
+## Tech stack
+
+> The stack is a proposal and open to discussion; items marked *(planned)* are not in the repo yet.
+
+### Backend (shared API for web, mobile and readers)
 
 * Language: Go
 * Framework: Gin
-* Architecture: Domain-Based Modular Monolith
-* API: REST + JSON
-* API Documentation: OpenAPI 3.1
-* OpenAPI Linting: Redocly CLI
-* API Docs UI: Scalar
-* OpenAPI Code Generation: oapi-codegen
-* Request Validation: go-playground/validator
-* Authentication: Casdoor (OAuth 2.0 / OpenID Connect)
-* OIDC / JWT Verification: coreos/go-oidc
-* Authorization: RBAC
-* Configuration: Environment variables (caarlos0/env)
+* Architecture: Domain-based modular monolith
+* API: REST + JSON, contract first
+* API contract: OpenAPI 3.0.3, linted with Redocly CLI
+* API docs UI: Scalar
+* Code generation: oapi-codegen (strict server)
+* Request validation: from the OpenAPI contract (kin-openapi)
+* Errors: RFC 9457 problem details
+* Authentication: Casdoor (OAuth 2.0 / OpenID Connect), verified with coreos/go-oidc
+* Device authentication: per-reader API keys (hashed, rotatable)
+* Authorization: RBAC (`admin` role) + per-resource ownership
+* Reader commands: embedded MQTT broker (mochi-mqtt), HTTP polling fallback
+* Configuration: environment variables (caarlos0/env)
 * Logging: slog
-* Live Reload: Air
+* Live reload: Air
 
 ### Database
 
-* Database: PostgreSQL
-* Database Driver: pgx
-* SQL Code Generation: sqlc
-* Database Migrations: golang-migrate
-* Migration Safety: Squawk
-
-### Web Frontend
-
-* Build Tool: Vite (HMR + React Fast Refresh)
-* Language: TypeScript
-* UI Library: React
-* Routing: TanStack Router
-* Package Manager: Bun
-* Styling: Tailwind CSS v4
-* UI Components: shadcn/ui
-* Icons: Lucide React
-* Data Fetching: TanStack Query
-* API Client Generation: Orval (from OpenAPI)
-* Forms: React Hook Form
-* Validation: Zod
-* Authentication: Casdoor (OIDC + PKCE)
-* OIDC Client: oidc-client-ts (react-oidc-context)
+* PostgreSQL 18 (UUIDv7 ids)
+* Driver: pgx
+* SQL code generation: sqlc (one package per module)
+* Migrations: golang-migrate (embedded in the binary)
+* Migration safety: Squawk
 
 ### Testing
 
-* Backend: Go testing
-* Assertions: testify
-* Integration Testing: Testcontainers
-* API Testing: Bruno
-* Web Unit Testing: Vitest + React Testing Library
-* Web E2E Testing: Playwright
+* Go testing + testify
+* Integration tests: Testcontainers (real PostgreSQL)
+* API testing: Bruno *(planned)*
+* Web: Vitest + React Testing Library, Playwright *(planned)*
+
+### Web frontend *(planned)*
+
+* Vite, TypeScript, React, TanStack Router + Query, Bun
+* Tailwind CSS v4, shadcn/ui, Lucide
+* Orval (API client from the contract), React Hook Form, Zod
+* Casdoor login with OIDC + PKCE (oidc-client-ts)
 
 ### Mobile (iOS & Android)
 
-* React Native + Expo, TypeScript, Expo Router
-* NativeWind v5 + Tailwind CSS v4
-* Lucide React Native
-* TanStack Query, React Hook Form, Zod
-* Casdoor (OIDC + PKCE), Expo AuthSession, Expo SecureStore
-* EAS Build
+* Decided by the mobile team. Phone-as-card (HCE) requires native Android
+  code (Kotlin, or a native module if React Native/Expo is used).
+* Login: Casdoor (OIDC + PKCE); API client generated from the contract.
 
-### Embedded System (ESP32-C3)
+### NFC reader hardware
 
-* Language: C (ESP-IDF)
-* NFC Reader: PN532
-* Connectivity: Wi-Fi
-* Communication: HTTPS + JSON
+* MCU: STM32
+* NFC frontend: PN5180 (preferred) / PN512 / ST25R3916
+* Connectivity: ESP32-C3 (Wi-Fi), HTTPS + MQTT
+* Cards: MIFARE DESFire EV2/EV3 recommended; MIFARE Classic supported as UID-only (insecure)
 
 ### Infrastructure & DevOps
 
-* Repository: GitHub Monorepo
-* Package Management: Bun + Go Modules
-* Containerization: Docker + Docker Compose
-* Reverse Proxy + Static Web Server: Caddy
-* Web Image: Multi-stage build (Bun to Caddy)
-* Backend Image: Multi-stage build (Go to distroless)
-* CI/CD: GitHub Actions
-* Git Hooks: Lefthook
-* Linting: ESLint + golangci-lint
-* Formatting: Prettier + gofmt
-
-### Charging Integration
-
-* Charging Protocol: TBD (pending charger hardware specifications)
-* OCPP: Deferred
-* Initial Integration: MockChargerAdapter
-* NFC Authentication: Physical NFC card via ESP32-C3 + Go backend
-* User Authentication: Casdoor
-* Device Authentication: Device-specific credentials
+* GitHub monorepo
+* Docker + Docker Compose; backend image: multi-stage Go → distroless
+* Reverse proxy + static web server: Caddy *(planned, with the web app)*
+* CI/CD: GitHub Actions; Dependabot for Go, Docker and Actions
+* Git hooks: Lefthook
+* Linting/formatting: golangci-lint, gofmt; ESLint + Prettier for web
