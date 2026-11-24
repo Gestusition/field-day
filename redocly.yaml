@@ -1,0 +1,12 @@
+# OpenAPI lint rules for api/openapi.yaml (run: npx @redocly/cli lint).
+extends:
+  - recommended
+
+rules:
+  info-license: off            # internal club project, no public license yet
+  operation-4xx-response: error
+  operation-operationId: error
+  operation-summary: error
+  security-defined: error
+  no-unused-components: warn
+  tag-description: off

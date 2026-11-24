@@ -1,0 +1,1807 @@
+openapi: 3.0.3
+info:
+  title: Field Day API
+  version: draft
+  description: |
+    Shared backend for the Field Day NFC platform (AREL Embedded Systems Club).
+
+    One contract, three kinds of clients:
+
+    | Path prefix | Client | Auth |
+    |---|---|---|
+    | `/me/*` | Mobile app, web (end user) | `userAuth` — Casdoor OIDC access token |
+    | `/admin/*` | Web admin panel | `adminAuth` — Casdoor OIDC access token with the admin role |
+    | `/device/*` | NFC readers (STM32 + ESP32-C3) | `deviceAuth` — per-reader API key |
+
+    Readers additionally receive server-initiated commands over MQTT; see
+    `docs/device-protocol.md`.
+
+    **Conventions**
+    - All ids are UUIDv7 strings (time ordered).
+    - Lists are cursor paginated: pass the `next_cursor` of the previous page
+      as `cursor`. A `null` `next_cursor` means there are no more pages.
+    - Money is integer minor units (`amount_minor`, kuruş for TRY).
+    - Errors use RFC 9457 `application/problem+json`.
+    - Card UIDs are hex strings; the server normalises them to upper case.
+servers:
+  - url: /api
+tags:
+  - name: me
+    description: The signed-in user (mobile app and web).
+  - name: admin-users
+  - name: admin-credentials
+  - name: admin-access
+    description: Zones, groups, grants and the access event log.
+  - name: admin-readers
+  - name: admin-wallets
+  - name: admin-audit
+  - name: device
+    description: Endpoints called by NFC reader firmware.
+
+paths:
+  # ------------------------------------------------------------------ me
+  /me:
+    get:
+      operationId: getMe
+      tags: [me]
+      summary: Get the signed-in user
+      description: The first call after login provisions the local user record.
+      security: [{ userAuth: [] }]
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me/credentials:
+    get:
+      operationId: listMyCredentials
+      tags: [me]
+      summary: List my cards and mobile credentials
+      security: [{ userAuth: [] }]
+      responses:
+        "200":
+          description: Credentials owned by the current user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me/credentials/{credentialId}/report-lost:
+    post:
+      operationId: reportMyCredentialLost
+      tags: [me]
+      summary: Report one of my credentials as lost
+      description: Immediately blocks the credential. Only an admin can reactivate it.
+      security: [{ userAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CredentialId"
+      responses:
+        "200":
+          description: Updated credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /me/mobile-credentials:
+    post:
+      operationId: issueMyMobileCredential
+      tags: [me]
+      summary: Issue a phone credential for Host Card Emulation
+      description: |
+        Creates a `mobile_hce` credential for this phone. The response contains
+        the HMAC secret **once**; store it in the platform keystore
+        (Android Keystore / iOS Keychain). See `docs/device-protocol.md` for the
+        challenge–response exchange the reader performs.
+      security: [{ userAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MobileCredentialCreate" }
+      responses:
+        "201":
+          description: Issued credential and its one-time secret
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileCredentialIssued" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /me/access-events:
+    get:
+      operationId: listMyAccessEvents
+      tags: [me]
+      summary: My access history
+      security: [{ userAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Access events, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessEventPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me/wallet:
+    get:
+      operationId: getMyWallet
+      tags: [me]
+      summary: My wallet balance
+      security: [{ userAuth: [] }]
+      responses:
+        "200":
+          description: Wallet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Wallet" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /me/wallet/transactions:
+    get:
+      operationId: listMyWalletTransactions
+      tags: [me]
+      summary: My wallet transactions
+      security: [{ userAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Transactions, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WalletTransactionPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ------------------------------------------------------------------ admin: users
+  /admin/users:
+    get:
+      operationId: listUsers
+      tags: [admin-users]
+      summary: List users
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: search
+          in: query
+          description: Case-insensitive match on email or display name.
+          schema: { type: string, minLength: 1, maxLength: 100 }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/UserStatus" }
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createUser
+      tags: [admin-users]
+      summary: Pre-register a user by email
+      description: |
+        Lets an admin issue cards before the person has ever logged in. The
+        record is linked to the Casdoor account on first login with the same
+        verified email.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreate" }
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /admin/users/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: getUser
+      tags: [admin-users]
+      summary: Get a user
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: User
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateUser
+      tags: [admin-users]
+      summary: Update a user
+      description: Suspending a user blocks every credential they own.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdate" }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # ------------------------------------------------------------------ admin: credentials
+  /admin/credentials:
+    get:
+      operationId: listCredentials
+      tags: [admin-credentials]
+      summary: List credentials
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/CredentialStatus" }
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/CredentialKind" }
+        - name: uid_prefix
+          in: query
+          schema: { type: string, pattern: "^[0-9A-Fa-f]{1,64}$" }
+      responses:
+        "200":
+          description: Credentials
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CredentialPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createCredential
+      tags: [admin-credentials]
+      summary: Register a physical card by UID
+      description: |
+        For cards whose UID is already known. To register a card by tapping it,
+        use `POST /admin/readers/{readerId}/enrollment` instead.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialCreate" }
+      responses:
+        "201":
+          description: Created credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /admin/credentials/{credentialId}:
+    parameters:
+      - $ref: "#/components/parameters/CredentialId"
+    get:
+      operationId: getCredential
+      tags: [admin-credentials]
+      summary: Get a credential
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateCredential
+      tags: [admin-credentials]
+      summary: Assign, relabel or change the status of a credential
+      description: "`revoked` is terminal: a revoked credential cannot be changed again."
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CredentialUpdate" }
+      responses:
+        "200":
+          description: Updated credential
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Credential" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  # ------------------------------------------------------------------ admin: access
+  /admin/zones:
+    get:
+      operationId: listZones
+      tags: [admin-access]
+      summary: List zones
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: All zones, by name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ZoneList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createZone
+      tags: [admin-access]
+      summary: Create a zone
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneInput" }
+      responses:
+        "201":
+          description: Created zone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /admin/zones/{zoneId}:
+    parameters:
+      - $ref: "#/components/parameters/ZoneId"
+    get:
+      operationId: getZone
+      tags: [admin-access]
+      summary: Get a zone
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Zone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateZone
+      tags: [admin-access]
+      summary: Update a zone
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ZoneInput" }
+      responses:
+        "200":
+          description: Updated zone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Zone" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteZone
+      tags: [admin-access]
+      summary: Delete a zone
+      description: Deletes its grants; readers in the zone become unassigned.
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-groups:
+    get:
+      operationId: listAccessGroups
+      tags: [admin-access]
+      summary: List access groups
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: All groups, by name
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGroupList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAccessGroup
+      tags: [admin-access]
+      summary: Create an access group
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessGroupInput" }
+      responses:
+        "201":
+          description: Created group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGroup" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /admin/access-groups/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    get:
+      operationId: getAccessGroup
+      tags: [admin-access]
+      summary: Get an access group
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGroup" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateAccessGroup
+      tags: [admin-access]
+      summary: Update an access group
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessGroupInput" }
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGroup" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      operationId: deleteAccessGroup
+      tags: [admin-access]
+      summary: Delete an access group
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-groups/{groupId}/members:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+    get:
+      operationId: listAccessGroupMembers
+      tags: [admin-access]
+      summary: List group members
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-groups/{groupId}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/GroupId"
+      - $ref: "#/components/parameters/UserId"
+    put:
+      operationId: addAccessGroupMember
+      tags: [admin-access]
+      summary: Add a user to a group (idempotent)
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Added }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: removeAccessGroupMember
+      tags: [admin-access]
+      summary: Remove a user from a group
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Removed }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-grants:
+    get:
+      operationId: listAccessGrants
+      tags: [admin-access]
+      summary: List access grants
+      security: [{ adminAuth: [] }]
+      parameters:
+        - name: zone_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: group_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Grants (at most 500)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGrantList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createAccessGrant
+      tags: [admin-access]
+      summary: Grant a user or group access to a zone
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AccessGrantCreate" }
+      responses:
+        "201":
+          description: Created grant
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessGrant" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-grants/{grantId}:
+    parameters:
+      - $ref: "#/components/parameters/GrantId"
+    delete:
+      operationId: deleteAccessGrant
+      tags: [admin-access]
+      summary: Revoke a grant
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Deleted }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/access-events:
+    get:
+      operationId: listAccessEvents
+      tags: [admin-access]
+      summary: Access event log
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: reader_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: zone_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: user_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: decision
+          in: query
+          schema: { $ref: "#/components/schemas/AccessDecision" }
+        - name: since
+          in: query
+          description: Inclusive lower bound on occurred_at.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Exclusive upper bound on occurred_at.
+          schema: { type: string, format: date-time }
+      responses:
+        "200":
+          description: Events, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AccessEventPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ------------------------------------------------------------------ admin: readers
+  /admin/readers:
+    get:
+      operationId: listReaders
+      tags: [admin-readers]
+      summary: List readers
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: zone_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/ReaderStatus" }
+      responses:
+        "200":
+          description: Readers
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      operationId: createReader
+      tags: [admin-readers]
+      summary: Register a reader
+      description: Returns the reader's API key **once**. Flash it into the device.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReaderCreate" }
+      responses:
+        "201":
+          description: Created reader with its API key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderWithKey" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /admin/readers/{readerId}:
+    parameters:
+      - $ref: "#/components/parameters/ReaderId"
+    get:
+      operationId: getReader
+      tags: [admin-readers]
+      summary: Get a reader
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Reader
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reader" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    put:
+      operationId: updateReader
+      tags: [admin-readers]
+      summary: Update a reader
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReaderUpdate" }
+      responses:
+        "200":
+          description: Updated reader
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reader" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/readers/{readerId}/rotate-key:
+    parameters:
+      - $ref: "#/components/parameters/ReaderId"
+    post:
+      operationId: rotateReaderKey
+      tags: [admin-readers]
+      summary: Issue a new API key (the old one stops working immediately)
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Reader with its new API key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderWithKey" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/readers/{readerId}/enrollment:
+    parameters:
+      - $ref: "#/components/parameters/ReaderId"
+    post:
+      operationId: startReaderEnrollment
+      tags: [admin-readers]
+      summary: Arm a reader so the next tapped card is registered
+      description: |
+        The next tap on this reader (within `ttl_seconds`) creates a credential
+        for the presented card instead of making an access decision.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EnrollmentCreate" }
+      responses:
+        "201":
+          description: Enrollment armed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Enrollment" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      operationId: cancelReaderEnrollment
+      tags: [admin-readers]
+      summary: Cancel a pending enrollment
+      security: [{ adminAuth: [] }]
+      responses:
+        "204": { description: Cancelled }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/readers/{readerId}/commands:
+    parameters:
+      - $ref: "#/components/parameters/ReaderId"
+    get:
+      operationId: listReaderCommands
+      tags: [admin-readers]
+      summary: Command history of a reader
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Commands, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderCommandPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createReaderCommand
+      tags: [admin-readers]
+      summary: Queue a command for a reader (e.g. write data to a card)
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReaderCommandCreate" }
+      responses:
+        "201":
+          description: Queued command
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderCommand" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  # ------------------------------------------------------------------ admin: wallets
+  /admin/users/{userId}/wallet:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: getUserWallet
+      tags: [admin-wallets]
+      summary: Get a user's wallet
+      security: [{ adminAuth: [] }]
+      responses:
+        "200":
+          description: Wallet
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Wallet" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /admin/users/{userId}/wallet/transactions:
+    parameters:
+      - $ref: "#/components/parameters/UserId"
+    get:
+      operationId: listUserWalletTransactions
+      tags: [admin-wallets]
+      summary: List a user's wallet transactions
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: Transactions, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WalletTransactionPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      operationId: createUserWalletTransaction
+      tags: [admin-wallets]
+      summary: Top up, refund or adjust a wallet
+      description: |
+        Idempotent per `idempotency_key`: repeating a request with the same key
+        returns the original transaction.
+      security: [{ adminAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WalletTransactionCreate" }
+      responses:
+        "201":
+          description: Recorded transaction
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WalletTransaction" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/Unprocessable" }
+
+  # ------------------------------------------------------------------ admin: audit
+  /admin/audit-logs:
+    get:
+      operationId: listAuditLogs
+      tags: [admin-audit]
+      summary: Admin audit trail
+      security: [{ adminAuth: [] }]
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: actor_user_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Audit entries, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuditLogPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  # ------------------------------------------------------------------ device
+  /device/heartbeat:
+    post:
+      operationId: deviceHeartbeat
+      tags: [device]
+      summary: Report liveness and fetch reader configuration
+      description: Call at boot and then every 30–60 s.
+      security: [{ deviceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HeartbeatRequest" }
+      responses:
+        "200":
+          description: Reader configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HeartbeatResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /device/taps:
+    post:
+      operationId: deviceTap
+      tags: [device]
+      summary: A card was presented — should the door open?
+      description: |
+        Always answered with `200`; the decision is in the body. Retrying with
+        the same `event_id` returns the original decision without recording a
+        second event.
+      security: [{ deviceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TapRequest" }
+      responses:
+        "200":
+          description: Access decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TapResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /device/wallet/charges:
+    post:
+      operationId: deviceWalletCharge
+      tags: [device]
+      summary: Charge the wallet of the presented card
+      description: |
+        Only readers in `wallet` mode may charge. Always answered with `200`;
+        approval is in the body. Idempotent per `idempotency_key`.
+      security: [{ deviceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChargeRequest" }
+      responses:
+        "200":
+          description: Charge result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChargeResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /device/commands:
+    get:
+      operationId: listDeviceCommands
+      tags: [device]
+      summary: Fetch open commands (polling fallback for MQTT)
+      security: [{ deviceAuth: [] }]
+      responses:
+        "200":
+          description: Pending commands, oldest first (max 20)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderCommandList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /device/commands/{commandId}/result:
+    parameters:
+      - $ref: "#/components/parameters/CommandId"
+    post:
+      operationId: reportDeviceCommandResult
+      tags: [device]
+      summary: Report the outcome of a command
+      security: [{ deviceAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommandResult" }
+      responses:
+        "200":
+          description: Completed command
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReaderCommand" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+components:
+  securitySchemes:
+    userAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Casdoor OIDC access token of any active user.
+    adminAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Casdoor OIDC access token whose roles include the admin role.
+    deviceAuth:
+      type: http
+      scheme: bearer
+      description: Reader API key (`fdr_...`) issued by `POST /admin/readers`.
+
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      description: Page size.
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      description: "`next_cursor` from the previous page."
+      schema: { type: string, format: uuid }
+    UserId:
+      name: userId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CredentialId:
+      name: credentialId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ZoneId:
+      name: zoneId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    GroupId:
+      name: groupId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    GrantId:
+      name: grantId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    ReaderId:
+      name: readerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CommandId:
+      name: commandId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: The request is malformed or fails validation.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Forbidden:
+      description: Authenticated but not allowed.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    NotFound:
+      description: The resource does not exist.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Conflict:
+      description: The request conflicts with the current state.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+    Unprocessable:
+      description: Well-formed but violates a business rule.
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    # ---------------------------------------------------------------- common
+    Problem:
+      type: object
+      description: RFC 9457 problem details.
+      required: [type, title, status]
+      properties:
+        type: { type: string, example: "https://field-day.dev/problems/not-found" }
+        title: { type: string, example: Not Found }
+        status: { type: integer, example: 404 }
+        detail: { type: string }
+        instance: { type: string }
+        request_id: { type: string }
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: credential_not_found
+        errors:
+          type: array
+          items: { $ref: "#/components/schemas/FieldError" }
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field: { type: string }
+        message: { type: string }
+
+    # ---------------------------------------------------------------- users
+    UserStatus:
+      type: string
+      enum: [active, suspended]
+    User:
+      type: object
+      required: [id, email, display_name, status, last_login_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, nullable: true }
+        display_name: { type: string }
+        status: { $ref: "#/components/schemas/UserStatus" }
+        last_login_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    Me:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          required: [roles, is_admin]
+          properties:
+            roles:
+              type: array
+              items: { type: string }
+            is_admin: { type: boolean }
+    UserCreate:
+      type: object
+      additionalProperties: false
+      required: [email, display_name]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        display_name: { type: string, minLength: 1, maxLength: 100 }
+    UserUpdate:
+      type: object
+      additionalProperties: false
+      required: [email, display_name, status]
+      properties:
+        email: { type: string, format: email, maxLength: 254, nullable: true }
+        display_name: { type: string, maxLength: 100 }
+        status: { $ref: "#/components/schemas/UserStatus" }
+    UserList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+    UserPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/User" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+
+    # ---------------------------------------------------------------- credentials
+    CredentialKind:
+      type: string
+      description: |
+        `desfire` — MIFARE DESFire EV1/EV2/EV3 (recommended, supports secure auth).
+        `mifare_classic` — legacy, UID only; its crypto is broken.
+        `mobile_hce` — a phone emulating a card; issued via `/me/mobile-credentials`.
+      enum: [desfire, mifare_classic, mifare_ultralight, ntag, iso15693, mobile_hce]
+    PhysicalCredentialKind:
+      type: string
+      enum: [desfire, mifare_classic, mifare_ultralight, ntag, iso15693]
+    CredentialStatus:
+      type: string
+      enum: [active, suspended, lost, revoked]
+    CardUid:
+      type: string
+      description: Card UID as hex (4–32 bytes). Case-insensitive.
+      pattern: "^([0-9A-Fa-f]{2}){4,32}$"
+      example: "04A2B3C4D5E680"
+    Credential:
+      type: object
+      required: [id, kind, uid, user_id, label, status, last_used_at, revoked_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/CredentialKind" }
+        uid: { type: string }
+        user_id: { type: string, format: uuid, nullable: true }
+        label: { type: string }
+        status: { $ref: "#/components/schemas/CredentialStatus" }
+        last_used_at: { type: string, format: date-time, nullable: true }
+        revoked_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CredentialCreate:
+      type: object
+      additionalProperties: false
+      required: [kind, uid]
+      properties:
+        kind: { $ref: "#/components/schemas/PhysicalCredentialKind" }
+        uid: { $ref: "#/components/schemas/CardUid" }
+        user_id: { type: string, format: uuid }
+        label: { type: string, maxLength: 100 }
+    CredentialUpdate:
+      type: object
+      additionalProperties: false
+      required: [user_id, label, status]
+      properties:
+        user_id: { type: string, format: uuid, nullable: true }
+        label: { type: string, maxLength: 100 }
+        status: { $ref: "#/components/schemas/CredentialStatus" }
+    CredentialList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Credential" }
+    CredentialPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Credential" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+    MobileCredentialCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        label:
+          type: string
+          maxLength: 100
+          description: e.g. the phone model.
+    MobileCredentialIssued:
+      type: object
+      required: [credential, secret, aid]
+      properties:
+        credential: { $ref: "#/components/schemas/Credential" }
+        secret:
+          type: string
+          format: byte
+          description: 32-byte HMAC-SHA256 key, base64. Returned only once.
+        aid:
+          type: string
+          description: ISO 7816 application id the HCE service must register.
+          example: F04649454C4444
+
+    # ---------------------------------------------------------------- access
+    Zone:
+      type: object
+      required: [id, name, description, require_secure_credential, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        require_secure_credential:
+          type: boolean
+          description: Deny credentials that were not cryptographically verified.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ZoneInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+        require_secure_credential: { type: boolean, default: false }
+    ZoneList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Zone" }
+    AccessGroup:
+      type: object
+      required: [id, name, description, member_count, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string }
+        member_count: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AccessGroupInput:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500 }
+    AccessGroupList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AccessGroup" }
+    TimeOfDay:
+      type: string
+      description: Local site time, 24h `HH:MM`.
+      pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+      example: "08:30"
+    AccessGrant:
+      type: object
+      required: [id, zone_id, user_id, group_id, weekdays, start_time, end_time, valid_from, valid_until, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        zone_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid, nullable: true }
+        group_id: { type: string, format: uuid, nullable: true }
+        weekdays:
+          type: array
+          description: ISO weekdays, 1 = Monday … 7 = Sunday.
+          items: { type: integer, minimum: 1, maximum: 7 }
+        start_time: { type: string, nullable: true, example: "08:00" }
+        end_time: { type: string, nullable: true, example: "18:00" }
+        valid_from: { type: string, format: date-time, nullable: true }
+        valid_until: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    AccessGrantCreate:
+      type: object
+      additionalProperties: false
+      description: |
+        Exactly one of `user_id` / `group_id`. Omit `start_time`/`end_time` for
+        all day. If `end_time` is before `start_time` the window wraps midnight.
+      required: [zone_id]
+      properties:
+        zone_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        group_id: { type: string, format: uuid }
+        weekdays:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items: { type: integer, minimum: 1, maximum: 7 }
+        start_time: { $ref: "#/components/schemas/TimeOfDay" }
+        end_time: { $ref: "#/components/schemas/TimeOfDay" }
+        valid_from: { type: string, format: date-time }
+        valid_until: { type: string, format: date-time }
+    AccessGrantList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AccessGrant" }
+    AccessDecision:
+      type: string
+      enum: [granted, denied, enrolled]
+    AccessReason:
+      type: string
+      description: |
+        Why the decision was made. Readers should show a short message for
+        `denied` and must never reveal more than "access denied" to the cardholder
+        for security-sensitive reasons.
+      enum:
+        - granted
+        - enrolled
+        - unknown_credential
+        - credential_inactive
+        - credential_unassigned
+        - user_inactive
+        - reader_not_in_zone
+        - reader_wrong_mode
+        - insecure_credential
+        - mobile_verification_failed
+        - no_grant
+        - outside_schedule
+        - already_registered
+        - insufficient_funds
+        - wallet_frozen
+    AccessEvent:
+      type: object
+      required: [id, reader_id, zone_id, credential_id, user_id, presented_uid, decision, reason, occurred_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        reader_id: { type: string, format: uuid }
+        zone_id: { type: string, format: uuid, nullable: true }
+        credential_id: { type: string, format: uuid, nullable: true }
+        user_id: { type: string, format: uuid, nullable: true }
+        presented_uid: { type: string }
+        decision: { $ref: "#/components/schemas/AccessDecision" }
+        reason: { $ref: "#/components/schemas/AccessReason" }
+        occurred_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+    AccessEventPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AccessEvent" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+
+    # ---------------------------------------------------------------- readers
+    ReaderMode:
+      type: string
+      description: "`access` opens doors; `wallet` takes payments."
+      enum: [access, wallet]
+    ReaderStatus:
+      type: string
+      enum: [active, disabled]
+    Reader:
+      type: object
+      required: [id, name, serial, zone_id, mode, status, firmware_version, last_seen_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        serial: { type: string }
+        zone_id: { type: string, format: uuid, nullable: true }
+        mode: { $ref: "#/components/schemas/ReaderMode" }
+        status: { $ref: "#/components/schemas/ReaderStatus" }
+        firmware_version: { type: string }
+        last_seen_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ReaderCreate:
+      type: object
+      additionalProperties: false
+      required: [name, serial]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        serial: { type: string, minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9._:-]+$" }
+        zone_id: { type: string, format: uuid }
+        mode: { $ref: "#/components/schemas/ReaderMode" }
+    ReaderUpdate:
+      type: object
+      additionalProperties: false
+      required: [name, zone_id, mode, status]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        zone_id: { type: string, format: uuid, nullable: true }
+        mode: { $ref: "#/components/schemas/ReaderMode" }
+        status: { $ref: "#/components/schemas/ReaderStatus" }
+    ReaderWithKey:
+      type: object
+      required: [reader, api_key]
+      properties:
+        reader: { $ref: "#/components/schemas/Reader" }
+        api_key:
+          type: string
+          description: "Shown only once. Send as `Authorization: Bearer <api_key>`."
+    ReaderPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Reader" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+    EnrollmentCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        user_id:
+          type: string
+          format: uuid
+          description: Owner of the new credential. Omit to enroll unassigned stock.
+        label: { type: string, maxLength: 100 }
+        ttl_seconds: { type: integer, minimum: 10, maximum: 600, default: 120 }
+    Enrollment:
+      type: object
+      required: [reader_id, user_id, label, expires_at]
+      properties:
+        reader_id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid, nullable: true }
+        label: { type: string }
+        expires_at: { type: string, format: date-time }
+    ReaderCommandType:
+      type: string
+      description: |
+        `write_card` — write `payload` to the next presented card (see WriteCardPayload).
+        `read_card` — read the location described in `payload` and report it.
+        `reboot` — restart the reader.
+        `sync` — re-fetch configuration via heartbeat.
+      enum: [write_card, read_card, reboot, sync]
+    ReaderCommandStatus:
+      type: string
+      enum: [pending, delivered, succeeded, failed, expired]
+    WriteCardPayload:
+      type: object
+      description: |
+        Payload for `write_card` / `read_card`. Use `aid` + `file_no` + `offset`
+        for DESFire, `block` for MIFARE Classic / Ultralight / NTAG pages.
+      properties:
+        expected_uid: { $ref: "#/components/schemas/CardUid" }
+        aid: { type: string, pattern: "^[0-9A-Fa-f]{6}$" }
+        file_no: { type: integer, minimum: 0, maximum: 31 }
+        offset: { type: integer, minimum: 0 }
+        block: { type: integer, minimum: 0 }
+        length: { type: integer, minimum: 1, maximum: 4096 }
+        data_hex: { type: string, pattern: "^([0-9A-Fa-f]{2})*$", maxLength: 8192 }
+    ReaderCommand:
+      type: object
+      required: [id, reader_id, type, payload, status, result, expires_at, delivered_at, completed_at, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        reader_id: { type: string, format: uuid }
+        type: { $ref: "#/components/schemas/ReaderCommandType" }
+        payload:
+          type: object
+          additionalProperties: true
+        status: { $ref: "#/components/schemas/ReaderCommandStatus" }
+        result:
+          type: object
+          nullable: true
+          additionalProperties: true
+        expires_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    ReaderCommandCreate:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type: { $ref: "#/components/schemas/ReaderCommandType" }
+        payload: { $ref: "#/components/schemas/WriteCardPayload" }
+        ttl_seconds: { type: integer, minimum: 10, maximum: 86400, default: 600 }
+    ReaderCommandList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReaderCommand" }
+    ReaderCommandPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/ReaderCommand" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+
+    # ---------------------------------------------------------------- wallet
+    Wallet:
+      type: object
+      required: [id, user_id, currency, balance_minor, status, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        currency: { type: string, example: TRY }
+        balance_minor: { type: integer, format: int64 }
+        status:
+          type: string
+          enum: [active, frozen]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    WalletTransactionKind:
+      type: string
+      enum: [topup, charge, refund, adjustment]
+    WalletTransaction:
+      type: object
+      required: [id, account_id, kind, amount_minor, balance_after_minor, refund_of, reader_id, description, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/WalletTransactionKind" }
+        amount_minor:
+          type: integer
+          format: int64
+          description: Signed; charges are negative.
+        balance_after_minor: { type: integer, format: int64 }
+        refund_of: { type: string, format: uuid, nullable: true }
+        reader_id: { type: string, format: uuid, nullable: true }
+        description: { type: string }
+        created_at: { type: string, format: date-time }
+    WalletTransactionCreate:
+      type: object
+      additionalProperties: false
+      required: [kind, amount_minor, idempotency_key]
+      properties:
+        kind:
+          type: string
+          enum: [topup, refund, adjustment]
+        amount_minor:
+          type: integer
+          format: int64
+          description: Positive for topup/refund; signed for adjustment.
+          minimum: -100000000
+          maximum: 100000000
+        refund_of:
+          type: string
+          format: uuid
+          description: Required for refund — the charge being refunded.
+        description: { type: string, maxLength: 200 }
+        idempotency_key: { type: string, minLength: 8, maxLength: 100 }
+    WalletTransactionPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WalletTransaction" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+
+    # ---------------------------------------------------------------- audit
+    AuditLog:
+      type: object
+      required: [id, actor_user_id, actor_subject, method, path, status_code, request_id, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        actor_user_id: { type: string, format: uuid, nullable: true }
+        actor_subject: { type: string }
+        method: { type: string }
+        path: { type: string }
+        status_code: { type: integer }
+        request_id: { type: string }
+        created_at: { type: string, format: date-time }
+    AuditLogPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/AuditLog" }
+        next_cursor: { type: string, format: uuid, nullable: true }
+
+    # ---------------------------------------------------------------- device
+    HeartbeatRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        firmware_version: { type: string, maxLength: 64 }
+    HeartbeatResponse:
+      type: object
+      required: [server_time, reader, mqtt_topic, hce_aid]
+      properties:
+        server_time:
+          type: string
+          format: date-time
+          description: Use to set the reader clock.
+        reader: { $ref: "#/components/schemas/Reader" }
+        mqtt_topic:
+          type: string
+          description: Topic to subscribe to for commands.
+          example: fieldday/readers/0190f0c0-.../commands
+        hce_aid:
+          type: string
+          description: AID to SELECT when a phone (HCE) is presented.
+    CredentialPresentation:
+      type: object
+      required: [uid, kind]
+      properties:
+        uid:
+          $ref: "#/components/schemas/CardUid"
+        kind: { $ref: "#/components/schemas/CredentialKind" }
+        secure_auth:
+          type: boolean
+          default: false
+          description: |
+            True when the reader completed cryptographic mutual authentication
+            with the card (e.g. DESFire AES with a diversified key).
+        mobile:
+          $ref: "#/components/schemas/MobileProof"
+    MobileProof:
+      type: object
+      description: |
+        For `mobile_hce`: the reader sent `challenge` to the phone and got back
+        `response = HMAC-SHA256(secret, challenge || reader_id_bytes)`.
+      required: [challenge, response]
+      properties:
+        challenge: { type: string, pattern: "^([0-9A-Fa-f]{2}){16,32}$" }
+        response: { type: string, pattern: "^[0-9A-Fa-f]{64}$" }
+    TapRequest:
+      allOf:
+        - $ref: "#/components/schemas/CredentialPresentation"
+        - type: object
+          properties:
+            event_id:
+              type: string
+              format: uuid
+              description: Generated by the reader; makes retries safe.
+            occurred_at:
+              type: string
+              format: date-time
+              description: Reader clock time of the tap. Defaults to server time.
+    TapResponse:
+      type: object
+      required: [event_id, decision, reason, unlock_ms, display_name]
+      properties:
+        event_id: { type: string, format: uuid }
+        decision: { $ref: "#/components/schemas/AccessDecision" }
+        reason: { $ref: "#/components/schemas/AccessReason" }
+        unlock_ms:
+          type: integer
+          description: How long to keep the lock open; 0 when denied.
+        display_name:
+          type: string
+          nullable: true
+          description: Cardholder name for a greeting display; null when denied.
+    ChargeRequest:
+      allOf:
+        - $ref: "#/components/schemas/CredentialPresentation"
+        - type: object
+          required: [amount_minor, idempotency_key]
+          properties:
+            amount_minor:
+              type: integer
+              format: int64
+              minimum: 1
+              maximum: 10000000
+            description: { type: string, maxLength: 200 }
+            idempotency_key: { type: string, minLength: 8, maxLength: 100 }
+    ChargeResponse:
+      type: object
+      required: [approved, reason, balance_minor, transaction_id]
+      properties:
+        approved: { type: boolean }
+        reason: { $ref: "#/components/schemas/AccessReason" }
+        balance_minor:
+          type: integer
+          format: int64
+          nullable: true
+          description: Balance after the charge; null when the card is unknown.
+        transaction_id: { type: string, format: uuid, nullable: true }
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [succeeded, failed]
+        result:
+          type: object
+          additionalProperties: true
+          description: 'e.g. `{"data_hex": "..."}` for read_card, `{"error": "..."}` on failure.'
