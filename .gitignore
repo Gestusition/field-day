@@ -1,0 +1,26 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Go
+apps/api/bin/
+apps/api/tmp/
+*.test
+*.out
+coverage.*
+
+# Node / Bun (web, mobile, tooling)
+node_modules/
+dist/
+.expo/
+
+# Editors and OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+.DS_Store
+Thumbs.db

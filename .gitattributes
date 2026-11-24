@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
+
+# Generated code: collapsed in GitHub diffs and excluded from language stats.
+apps/api/internal/apigen/*.gen.go linguist-generated=true
+apps/api/internal/*/store/*.go    linguist-generated=true
